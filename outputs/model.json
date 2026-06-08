@@ -1,0 +1,36 @@
+{
+  "model": "PointNet2Mini",
+  "checkpoint": "best_model.pt",
+  "epoch": 36,
+  "val_mIoU": 0.6412053108215332,
+  "num_classes": 6,
+  "active_classes": [
+    "Ground",
+    "LowVegetation",
+    "MedVegetation",
+    "HighVegetation",
+    "Building",
+    "Noise"
+  ],
+  "input_shape": [
+    1,
+    4096,
+    7
+  ],
+  "output_shape": [
+    1,
+    4096,
+    6
+  ],
+  "opset": 14,
+  "features": [
+    "x_rel",
+    "y_rel",
+    "z_rel",
+    "intensity_log1p_zscore",
+    "return_number_div6",
+    "n_returns_div6",
+    "scan_angle_deg60"
+  ],
+  "ood_note": "Use hybrid OOD detector: energy score + raw intensity threshold. Water AUROC=0.8232 with intensity-only method."
+}
