@@ -467,7 +467,54 @@ Per-class IoU (Run 7 val, best checkpoint epoch 36):
 
 ---
 
-## 11. Τι Θα Κάναμε Διαφορετικά
+## 11. Continual Learning — Ανακαλύψεις & Αποτελέσματα
+
+### Pipeline που υλοποιήθηκε
+
+```
+make_basket.py          → 10 labeled Water patches από FRACTAL val set
+few_shot_add_class.py   → mean embedding από τα 10 patches → Water prototype
+lwf_train.py            → LwF: frozen backbone, μόνο classifier head (224 params)
+evaluate_cl.py          → σύγκριση base vs CL model στο test set
+```
+
+### Bug: Catastrophic Forgetting
+
+Αρχική υπόθεση: `CosineClassifier.add_class()` appends νέα γραμμή → παλιές γραμμές ακάγγιχτες → zero forgetting by design.
+
+**Πραγματικότητα:** Το `weight` είναι ένα ενιαίο `nn.Parameter`. Ακόμα κι αν δώσουμε `optimizer([classifier.weight])`, το `.grad` τρέχει για ΟΛΕΣτις γραμμές. Αποτέλεσμα:
+
+| Κατάσταση | Ground IoU | mIoU |
+|-----------|-----------|------|
+| Base model (Run 7) | 0.883 | 0.6196 |
+| Few-shot prototype only | 0.008 | 0.353 |
+| LwF (πριν fix) | 0.199 | 0.415 |
+
+**Fix:** Gradient mask μετά το `backward()`:
+```python
+student.classifier.weight.grad[:new_class_model_idx] = 0.0
+```
+
+### Θεμελιώδες Πρόβλημα
+
+Ο encoder εκπαιδεύτηκε με `ignore_index=Water` → δεν υπάρχει gradient που να χωρίζει Water από Ground στον 32-dim embedding space. Water και Ground έχουν ίδια γεωμετρία (flat terrain), μόνο το intensity τα χωρίζει — αλλά ο encoder ήδη "ξέρει" ground χωρίς να χρειάζεται intensity.
+
+**Συμπέρασμα:** Για αληθινή CL (όπου ο encoder δεν έχει δει την νέα κλάση), χρειάζεται είτε:
+1. Partial encoder unfreeze (ρίσκο forgetting)
+2. Auxiliary loss που αναγκάζει το embedding να κωδικοποιεί intensity
+3. **Η πρακτική λύση**: two-stage — classifier + ανεξάρτητος OOD detector
+
+### Τελικό Deployment Architecture
+
+```
+[LiDAR patch] → [PointNet++ Mini] → [6-class labels]    (mIoU=0.6196)
+                      ↓
+                 [raw intensity] → [OOD Detector]  →  [Water flag]  (AUROC=0.8232)
+```
+
+---
+
+## 12. Τι Θα Κάναμε Διαφορετικά
 
 1. **Feature selection πρώτα, μοντέλο μετά:** Αφιερώσαμε χρόνο σε architecture πριν επιβεβαιωθεί ότι τα 7 features αρκούν. EDA πρώτα, σχεδιασμός μετά.
 

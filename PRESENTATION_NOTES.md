@@ -154,36 +154,34 @@ Best checkpoint: epoch 72 · val mIoU peak 0.5923 · detailed evaluation below
 > ⚠️ LowVegetation regression (0.168→0.113): Focal Loss ανακατανέμει gradient προς Bridge/Noise.
 > Πιθανή αιτία: αυξημένη σύγχυση LowVeg↔MedVeg όταν το μοντέλο "εστιάζει" σε σπανιότερες κλάσεις.
 
-### Συνολική Σύγκριση (για Poster)
+### Συνολική Σύγκριση — Εξέλιξη Runs
 
 Val set = tuning metric · **Test set = final poster numbers (αγγίχτηκε μία φορά)**
 
-| Μέθοδος | mIoU (test) | Bridge IoU | Water IoU | OA |
-|---------|-------------|-----------|-----------|-----|
-| Weighted CE baseline (val mean±std) | 0.453 ± 0.037 | 0.060 ± 0.025 | ~0.83† | ~0.78† |
-| **Focal Loss γ=2 — TEST SET** | **0.6045** | **0.284** | **0.914** | **0.9080** |
-| **Δ vs baseline** | **+0.151 (+33%)** | **+0.224 (+373%)** | — | **+0.13** |
+| Run | Classes | Config | Val mIoU | **Test mIoU** | OA |
+|-----|---------|--------|----------|---------------|----|
+| 1–3 (baseline) | 8 | Weighted CE | 0.453 ± 0.037 | — | ~0.78 |
+| 4 | 8 | Focal γ=2, stable weights | 0.581 | 0.605 | 0.908 |
+| 5 | 6 | Focal, exclude Water/Bridge | 0.656 | — | — |
+| 6 | 6 | + log1p intensity (fine-tune) | 0.638 | — | — |
+| **7 ← POSTER** | **6** | **+ xyz_dropout=0.20** | **0.641** | **0.6196** | **0.9110** |
 
-†Runs 1–2 only; Run 3 per-class log not captured
+#### ★ Test set per-class IoU — Run 7 (POSTER NUMBERS)
 
-#### Test set per-class IoU (Run 4 — final)
-| Κλάση | Test IoU | Bar |
-|-------|----------|-----|
-| Ground | 0.870 | ████████████████▌ |
-| LowVegetation | 0.082 | █▋ ⚠️ |
-| MedVegetation | 0.470 | █████████▍ |
-| HighVegetation | 0.939 | ██████████████████▊ |
-| Building | 0.757 | ███████████████▏ |
-| Water | 0.914 | ██████████████████▎ |
-| Bridge | 0.284 | █████▋ |
-| Noise | 0.520 | ██████████▍ |
-| **mIoU** | **0.6045** | |
-| **macro F1** | **0.7042** | |
-| **OA** | **0.9080** | |
+| Κλάση | Test IoU | |
+|-------|----------|-|
+| Ground | 0.883 | ████████████████▊ ✓ |
+| LowVegetation | 0.090 | █▊ ⚠️ |
+| MedVegetation | 0.481 | █████████▌ |
+| HighVegetation | 0.940 | ██████████████████▊ ✓ |
+| Building | 0.795 | ███████████████▉ ✓ |
+| Noise | 0.528 | ██████████▌ |
+| **mIoU** | **0.6196** | |
+| **macro F1** | **0.7166** | |
+| **OA** | **0.9110** | |
 
-> 🎯 Test mIoU (0.6045) > Val mIoU (0.5813) → κανένα overfitting στο val set
-> 🎯 Bridge test IoU = 0.284 vs val IoU = 0.124 → test set έχει "τυπικότερα" Bridge examples
-> ⚠️ LowVegetation = 0.082 (χειρότερο test από val 0.113) — ongoing confusion με MedVeg
+> ✓ Water & Bridge εξαιρούνται από training (ignore_index) — δεν μετρούν στο mIoU
+> ⚠️ LowVegetation = 0.090 — persistent confusion με MedVeg (παρόμοια patch-level γεωμετρία)
 
 ---
 
@@ -411,11 +409,58 @@ Post-flight:
 
 ### Πλήρης πίνακας runs
 
-| Run | Classes | Loss | Weights | Σκοπός |
-|-----|---------|------|---------|--------|
-| 1–3 | 8 (all) | Weighted CE | 50-patch (unstable) | Baseline mean±std |
-| 4 | 8 (all) | Focal (γ=2) | ALL patches (stable) | Best baseline / upper bound |
-| 5 | 6 (χωρίς Water/Bridge) | Focal (γ=2) | ALL patches | Base model για OOD pipeline |
+| Run | Classes | Config | Val mIoU | Test mIoU | Σκοπός |
+|-----|---------|--------|----------|-----------|--------|
+| 1–3 | 8 | Weighted CE, 50-patch weights | 0.453±0.037 | — | Baseline mean±std |
+| 4 | 8 | Focal γ=2, stable weights | 0.581 | 0.605 | Best 8-class |
+| 5 | 6 | Focal, exclude Water/Bridge | 0.656 | — | First 6-class |
+| 6 | 6 | + log1p intensity, fine-tune | 0.638 | — | Intensity preprocessing |
+| **7** | **6** | **+ xyz_dropout=0.20** | **0.641** | **0.6196** | **★ POSTER** |
+
+---
+
+## 6.5 Continual Learning Pipeline
+
+### Υλοποιημένα Components
+
+```
+few_shot_add_class.py  → prototype init από 10 labeled patches (Water/Bridge)
+lwf_train.py           → Learning without Forgetting (LwF) με frozen backbone
+evaluate_cl.py         → αξιολόγηση base + CL model σε test set
+inference.py           → ONNX + OOD detection + --save-basket για Pi5
+```
+
+### Αποτελέσματα CL — Water ως νέα κλάση
+
+Εκπαίδευση: 224 trainable params (μόνο classifier head), backbone frozen, KD loss λ=1.0 T=2.0.
+
+| Μέθοδος | Ground IoU | Water IoU | mIoU (6cl) |
+|---------|-----------|-----------|------------|
+| Base model (Run 7) | 0.883 | — (OOD) | 0.6196 |
+| Few-shot prototype only | 0.008 ⚠️ | — | 0.353 |
+| LwF (πριν gradient mask) | 0.199 ⚠️ | — | 0.415 |
+
+**Ανακαλύφθηκε κρίσιμο bug**: `CosineClassifier.weight` είναι ένα ενιαίο `nn.Parameter` — ακόμα και με `optimizer(classifier)` μόνο, όλες οι 7 γραμμές ενημερώνονται. Οι παλιές κλάσεις ξεχνιόνται.
+
+**Fix**: Gradient mask μετά το `backward()`:
+```python
+if student.classifier.weight.grad is not None:
+    student.classifier.weight.grad[:new_class_model_idx] = 0.0
+```
+
+### Γιατί το Water είναι δύσκολο
+
+Ο encoder εκπαιδεύτηκε με `ignore_index` για Water — δεν υπάρχει gradient που να χωρίζει Water από Ground στον 32-dim space. Αποτέλεσμα: Water prototypes overlap με Ground cluster → catastrophic forgetting.
+
+### ★ Recommended δύο-στάδια αρχιτεκτονική (για Poster)
+
+```
+Stage 1: Base model (ONNX) → 6-class semantic segmentation  [mIoU=0.6196]
+Stage 2: OOD detector → intensity-only threshold              [AUROC=0.8232]
+
+Πλεονέκτημα: τα δύο στάδια είναι ανεξάρτητα.
+Το OOD detector δεν επηρεάζει το classifier και το αντίστροφο.
+```
 
 ---
 
@@ -427,17 +472,11 @@ Post-flight:
 ### Για τα metrics
 > "Χρησιμοποιούμε mIoU αντί για Overall Accuracy επειδή το OA εξαπατάται από imbalanced classes — αρκεί να πεις 'όλα Ground' για 79% OA. Το mIoU μετράει TP/(TP+FP+FN) ανά κλάση και δεν εξαπατάται."
 
-### Για το Bridge IoU (αδύνατη κλάση)
-> "Το Bridge IoU ξεκίνησε στο 0.053. Αυτό είναι πρόβλημα **absolute rarity** (Tsoumakas, Class Imbalance) — έχουμε πολύ λίγα απόλυτα παραδείγματα Bridge, όχι μόνο χαμηλό ποσοστό. Εφαρμόσαμε Focal Loss (Lin et al., TPAMI 2020) που μειώνει δραστικά το gradient contribution των easy examples."
-
 ### Για το OOD Detection
-> "Δεν προσθέσαμε OOD class στο μοντέλο. Αντίθετα, εκπαιδεύσαμε σε 6 κλάσεις και χρησιμοποιούμε το Energy Score — όταν το μοντέλο είναι αβέβαιο για ΟΛΑ τα γνωστά labels, ξέρουμε ότι βλέπει κάτι novel. Αξιολογούμε ποσοτικά με Precision/Recall/AUROC χρησιμοποιώντας το FRACTAL ground truth ως oracle."
-
-### Για την αυτόνομη μάθηση (το πιο δυνατό σημείο)
-> "Το drone κουβαλάει μια βιβλιοθήκη terrain prototypes — 32-διάστατα embeddings για κάθε πιθανό τύπο εδάφους, ετοιμασμένα offline από ειδικό. Όταν συναντά κάτι novel, κάνει cosine matching με τη βιβλιοθήκη. Αν βρει ταίριασμα (similarity > threshold), μαθαίνει τη νέα κλάση αυτόνομα — χωρίς labels, χωρίς retraining, χωρίς internet. Αν δεν βρει ταίριασμα, αποθηκεύει το σημείο για post-flight review από τον επιστήμονα."
+> "Δεν προσθέσαμε OOD class στο μοντέλο. Εκπαιδεύσαμε σε 6 κλάσεις — Water/Bridge αντιμετωπίζονται ως unknown. Ο OOD detector βλέπει τα raw intensity features: Water έχει specular reflection (χαμηλό intensity) ανιχνεύσιμο με AUROC=0.8232. Αξιολογούμε ποσοτικά με FRACTAL ground truth ως oracle."
 
 ### Για το Continual Learning
-> "Ο CosineClassifier προσθέτει νέες κλάσεις χωρίς retraining: add_class() appends ένα νέο prototype row. Δεν υπάρχει catastrophic forgetting by design, επειδή οι παλιές γραμμές δεν αλλάζουν."
+> "Ο CosineClassifier μπορεί να προσθέσει νέες κλάσεις με add_class() χωρίς retraining. Υλοποιήσαμε LwF (Learning without Forgetting) — μόνο 224 params εκπαιδεύονται. Ανακαλύψαμε catastrophic forgetting λόγω embedding overlap Water/Ground (ο encoder δεν είδε ποτέ Water). Η πρακτική λύση: δύο-στάδια αρχιτεκτονική — classifier + ανεξάρτητος OOD detector."
 
 ### Για την αναπαραγωγιμότητα
 > "Κάναμε 3 runs για mean±std reporting. Ανακαλύψαμε αστάθεια στα class weights λόγω τυχαίου 50-patch sampling — ένα γνωστό πρόβλημα σε imbalanced settings. Στον run 4 το διορθώσαμε με computation από ΟΛΟ το train set."
@@ -522,56 +561,48 @@ python src/train.py --epochs 100 --bs 16 --cache --loss focal --gamma 2.0 --excl
 
 ---
 
-## 9. TODO — Επόμενα Βήματα
+## 9. Κατάσταση Project
 
-- [x] **Run 3**: mIoU=0.4153, Bridge=0.033 (καταγράφηκε)
-- [x] **Run 4**: mIoU=0.5813, OA=0.9136, F1=0.6767 — **τελείωσε ✓** (best config = Focal Loss γ=2)
-- [x] **Ablation table**: ενημερώθηκε παραπάνω
-- [x] **src/evaluate_test.py**: **τελείωσε ✓** — test mIoU=0.6045, Bridge=0.284, OA=0.9080
-- [x] **Run 5**: 6-class model — **τελείωσε ✓** val mIoU=0.6557 @ epoch 82
-- [x] **src/ood_detector.py**: **τελείωσε ✓ (partial)** — Bridge AUROC excellent (d'=1.66), Water αποτυγχάνει (d'=0.05, AUROC=0.43)
-- [x] **src/ood_mahalanobis.py**: **τελείωσε ✓** — AUROC=0.4104 (χειρότερο από Energy). Διάγνωση: Water/Ground αδιαχώριστα στον 32-dim χώρο.
-- [x] **src/check_intensity.py**: **τελείωσε ✓** — Raw intensity AUROC=0.8655. Water raw≈568, Ground≈2277 (4x διαφορά).
-- [x] **src/ood_hybrid.py**: **γράφτηκε ✓** — Energy + Intensity fusion. Δεν τρέχει ακόμα.
+### ✅ Ολοκληρωμένα
 
-### 🔄 Run 6 — Επιστροφή στο Preprocessing (Intensity Log Transform)
+| # | Task | Αποτέλεσμα |
+|---|------|-----------|
+| Base training | Runs 1–7, Focal Loss, xyz_dropout | **Run 7: test mIoU=0.6196, OA=0.9110** |
+| OOD Investigation | Energy, Mahalanobis, Hybrid | **Hybrid AUROC=0.8232** (intensity-only) |
+| CL Pipeline | few_shot_add_class, lwf_train, evaluate_cl | Catastrophic forgetting ανακαλύφθηκε + gradient mask fix |
+| Inference Pi5 | ONNX export + onnxruntime script | `src/inference.py` — πλήρης |
+| Data pipeline | make_basket, split_yellowscan | Έτοιμο (YellowScan split τρέχει) |
+| Git | Όλος ο κώδικας + checkpoints | Committed στο main |
 
-**Απόφαση:** Αντί για post-hoc hybrid (που χρησιμοποιεί raw intensity εκτός μοντέλου), αλλάξαμε το **preprocessing** ώστε το μοντέλο να μαθαίνει σωστά από την αρχή.
+### 🔜 Αύριο
 
-**Ρίζα του προβλήματος:**
-- Raw intensity: right-skewed (train std/mean = 1.95)
-- z-score(raw): Water=-0.474, Ground=-0.355 → διαφορά 0.12 units (αόρατη vs xyz range ±3)
-- z-score(log1p): Water≈-0.92, Ground≈+0.09 → διαφορά ≈1.01 units (~8.5x βελτίωση)
+- [ ] **YellowScan split**: τελειώνει αύριο → `python src/make_ys_demo.py --n 10`
+- [ ] **Pi5 latency measurement**: τρέξε `inference.py` σε FRACTAL tile, μέτρα `latency_ms`
+- [ ] **Pi5 inference σε YellowScan demo**: domain shift test, οπτική επαλήθευση
+- [ ] **Poster numbers από Pi5**: αντικατάστησε CPU estimates με πραγματικές μετρήσεις
 
-**Αλλαγές (μόνο preprocessing, ΟΧΙ αρχιτεκτονική):**
-```python
-# preprocessing.py — μία γραμμή:
-out[:, 3] = (np.log1p(intensity) - stats["intensity"]["mean"]) / stats["intensity"]["std"]
+### 📊 Τελικοί Αριθμοί Poster
+
 ```
+Base Model (Run 7):
+  Test mIoU  = 0.6196
+  Test F1    = 0.7166
+  Test OA    = 0.9110
+  Params     = 30,368   (0.12 MB)
 
-**Μεθοδολογική καθαρότητα:** Η απόφαση βασίζεται ΜΟΝΟ σε train-set statistics και domain knowledge (specular reflection). Δεν χρησιμοποιήθηκε καμία πληροφορία από val/test.
+OOD Detection (intensity-only):
+  AUROC      = 0.8232
+  Threshold  = 0.9967   (calibrated on val)
+  Method     = hybrid weight_energy=0.0 / weight_intensity=1.0
 
-**Run 6 pipeline:**
-```bash
-# 1. Υπολόγισε νέα stats (train-only, log1p)
-python src/compute_normalizer_stats.py
+CL (Water, LwF):
+  Trainable params = 224  (classifier head only)
+  Status           = catastrophic forgetting (Water/Ground overlap in 32-dim)
+  Recommended      = two-stage: classifier + independent OOD detector
 
-# 2. Σβήσε παλιό cache (δημιουργήθηκε με z-score raw)
-find data/ -name "*.npz" -delete
-
-# 3. Retrain (ίδια config με Run 5)
-python src/train.py --run-name run6_log1p --exclude-classes Water Bridge --epochs 100
-
-# 4. OOD evaluation
-python src/ood_mahalanobis.py
+Pi5 Latency:
+  → μετράται αύριο
 ```
-
-- [ ] **Run 6**: Τρέξε `compute_normalizer_stats.py` → σβήσε cache → retrain → `ood_mahalanobis.py`
-- [ ] **src/few_shot.py**: OOD cluster → cosine matching με Knowledge Library → `add_class()`
-- [ ] **src/export_onnx.py**: Run6_model.pt → model.onnx → Pi5 deployment (~35ms target)
-- [ ] **src/inference.py**: Pi5 inference script (onnxruntime + normalizer_stats.json)
-- [ ] **notebooks/results.ipynb**: Learning curves, per-class IoU bars με error bars, confusion matrix
-- [ ] **Domain shift test**: Run6 model inference στο YellowScan → οπτική επαλήθευση + energy map
 
 ---
 
