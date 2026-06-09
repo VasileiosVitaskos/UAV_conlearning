@@ -23,4 +23,9 @@ outputs/ood_energy_dist.csv
 # OOD basket — runtime-generated embeddings (not versioned)
 outputs/ood_basket/
 
-# Note
+# Notebooks
+notebooks/.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# Model weights — versioned (PointNet2Mini = ~388KB, fine for git)
+# *.pt  ← intentionally NOT excluded (small en

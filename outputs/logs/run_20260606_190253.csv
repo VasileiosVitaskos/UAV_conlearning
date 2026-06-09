@@ -1,0 +1,2 @@
+epoch,train_loss,val_loss,mIoU,macro_F1,OA,lr,iou_Ground,iou_LowVegetation,iou_MedVegetation,iou_HighVegetation,iou_Building,iou_Water,iou_Bridge,iou_Noise
+1,2.25942,2.511447,0.058621,0.101411,0.201538,0.00099976,0.188129,0.0,0.001395,0.060408,0.160413,0.0,0.0,

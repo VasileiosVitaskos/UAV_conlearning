@@ -159,9 +159,17 @@ class BasketDataset(Dataset):
             sel = self.rng.choice(n, size=self.num_points, replace=replace)
             X, y = X[sel], y[sel]
 
+        # Convert raw LAS labels → CLASS_MAP indices
+        # extract_features returns raw LAS values (2,3,4,5,6,9,17,64).
+        # lwf_loss expects CLASS_MAP indices (0,1,2,3,4,5,6,7).
+        # Without this, Water (raw=9) gets clamped to full_lut[8]=-1 and is ignored.
+        y_map_arr = np.full(len(y), -1, dtype=np.int64)
+        for raw_cls, map_idx in CLASS_MAP.items():
+            y_map_arr[y == raw_cls] = map_idx
+
         return (
             torch.from_numpy(X),
-            torch.from_numpy(y).long(),  # CLASS_MAP indices (raw)
+            torch.from_numpy(y_map_arr),  # CLASS_MAP indices (0-7)
         )
 
 
@@ -352,6 +360,9 @@ def main():
     base_ckpt = torch.load(str(base_ckpt_path), map_location=device, weights_only=False)
     n_old     = base_ckpt.get("num_classes", 6)
     remap_lut = base_ckpt.get("remap_lut", _DEFAULT_REMAP_LUT)
+    # fix: checkpoint saved on CUDA → remap_lut is Tensor, not list
+    if isinstance(remap_lut, torch.Tensor):
+        remap_lut = remap_lut.cpu().tolist()
 
     teacher = PointNet2Mini(in_channels=7, num_classes=n_old).to(device)
     teacher.load_state_dict(base_ckpt["model_state"])
@@ -468,6 +479,11 @@ def main():
 
             optimizer.zero_grad()
             loss.backward()
+            # ΚΡΙΣΙΜΟ: μόνο η νέα κλάση (γραμμή new_class_model_idx) ενημερώνεται.
+            # Μηδενίζουμε τα gradients των παλιών κλάσεων ώστε τα prototypes τους
+            # να παραμείνουν ακριβώς όπως ήταν (δεν χρειάζεται KD για αυτό).
+            if student.classifier.weight.grad is not None:
+                student.classifier.weight.grad[:new_class_model_idx] = 0.0
             torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
             optimizer.step()
 
@@ -517,28 +533,4 @@ def main():
         with open(ROOT / "outputs" / "model.json") as f:
             meta = json.load(f)
         meta["num_classes"]    = n_new
-        meta["active_classes"] = active_names
-        meta["lwf_trained"]    = True
-        meta["checkpoint"]     = out_path.name
-        with open(meta_path, "w") as f:
-            json.dump(meta, f, indent=2)
-        print(f"  ✓ Model JSON: {meta_path}")
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    print(f"\n{'═'*65}")
-    print(f"  LwF Training Complete")
-    print(f"  New class    : '{args.class_name}' (model idx {new_class_model_idx})")
-    print(f"  Total classes: {n_old} → {n_new}")
-    print(f"  Best loss    : {best_loss:.4f}")
-    print(f"  Saved        : {out_path}")
-    if not args.no_export:
-        print(f"  ONNX         : {ROOT / 'outputs' / f'model_lwf_{class_name_lower}.onnx'}")
-    print(f"\n  NEXT:")
-    print(f"    python src/evaluate_cl.py \\")
-    print(f"       --cl-checkpoint {out_path} \\")
-    print(f"       --base-checkpoint {base_ckpt_path}")
-    print(f"{'═'*65}\n")
-
-
-if __name__ == "__main__":
-    main()
+        meta["active_classes"] = acti

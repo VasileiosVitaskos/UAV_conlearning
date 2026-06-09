@@ -1,0 +1,66 @@
+{
+  "cl_checkpoint": "outputs\\checkpoints\\best_model_lwf_water.pt",
+  "base_checkpoint": "outputs\\checkpoints\\best_model.pt",
+  "added_class": "Water",
+  "target_map_idx": 5,
+  "new_class_idx": 6,
+  "n_shots": 10,
+  "n_embeddings": 19108,
+  "split": "test",
+  "cl_results": {
+    "total_target_pts": 238488,
+    "patches_used": 108,
+    "recall": 0.9978,
+    "correct_new": 237965,
+    "confusion": {
+      "Ground": {
+        "count": 489,
+        "pct": 0.2
+      },
+      "LowVegetation": {
+        "count": 27,
+        "pct": 0.0
+      },
+      "MedVegetation": {
+        "count": 2,
+        "pct": 0.0
+      },
+      "HighVegetation": {
+        "count": 5,
+        "pct": 0.0
+      },
+      "Water": {
+        "count": 237965,
+        "pct": 99.8
+      }
+    }
+  },
+  "base_results": {
+    "total_target_pts": 238488,
+    "patches_used": 108,
+    "recall": 0.0,
+    "correct_new": 0,
+    "confusion": {
+      "Ground": {
+        "count": 238385,
+        "pct": 100.0
+      },
+      "LowVegetation": {
+        "count": 70,
+        "pct": 0.0
+      },
+      "MedVegetation": {
+        "count": 2,
+        "pct": 0.0
+      },
+      "HighVegetation": {
+        "count": 5,
+        "pct": 0.0
+      },
+      "Building": {
+        "count": 26,
+        "pct": 0.0
+      }
+    }
+  }
+}
