@@ -6,6 +6,7 @@ Pi5 inference script — terrain classification + OOD detection από .laz patc
     python src/inference.py data/test/00/patch_001.laz
     python src/inference.py data/test/00/patch_001.laz --model outputs/model.onnx
     python src/inference.py data/test/00/patch_001.laz --verbose
+    python src/inference.py yellowscan_patch.laz --sensor yellowscan --save-basket outputs/ood_basket
 
 Output (stdout JSON):
     {
@@ -19,14 +20,22 @@ Output (stdout JSON):
     }
 
 Απαιτήσεις (Pi5):
-    pip install onnxruntime laspy numpy
-    (δεν χρειάζεται PyTorch!)
+    pip install onnxruntime laspy numpy         # για normal inference
+    pip install torch                           # μόνο αν χρησιμοποιείς --save-basket
 
-OOD Method (hybrid):
-    - Energy Score: -logsumexp(logits)  [για Bridge-like geometric anomalies]
-    - Intensity threshold: log1p(intensity) < θ_water  [για Water specular reflection]
-    - Fusion: flagged αν energy > thr_e OR intensity < thr_i
-    - Thresholds βαθμονομημένα στο val set (F1-optimal)
+OOD Method (hybrid — calibrated στο val set):
+    - Intensity score: (intensity_hi - z_intensity) / (intensity_hi - intensity_lo)
+      → high score = low intensity = Water (specular reflection, near-IR absorbs)
+    - Energy score: (z_energy - energy_lo) / (energy_hi - energy_lo)
+      → high score = high energy = Bridge (geometric novelty)
+    - Hybrid: weight_energy*E_score + weight_intensity*I_score > best_threshold
+    - Params βαθμονομημένα στο val set (ood_hybrid_results.json)
+      weight_energy=0.0, weight_intensity=1.0  →  intensity-only  (AUROC=0.8232)
+
+--save-basket:
+    Όταν OOD ανιχνευτεί, αποθηκεύει τα 32-dim embeddings των OOD points σε .npy.
+    Αυτά χρησιμοποιούνται από few_shot_add_class.py --mode basket για CL update.
+    ΑΠΑΙΤΕΙ PyTorch + best_model.pt (εκτός από ONNX).
 """
 
 import sys
@@ -76,6 +85,16 @@ def parse_args():
     p.add_argument("--no-ood", action="store_true",
                    dest="no_ood",
                    help="Skip OOD detection (faster)")
+    p.add_argument("--save-basket", type=str, default=None,
+                   dest="save_basket",
+                   metavar="DIR",
+                   help="Αν OOD ανιχνευτεί, αποθήκευσε embeddings (.npy) στον DIR "
+                        "για few-shot CL. Απαιτεί --pt-model ή αυτόματη εύρεση best_model.pt. "
+                        "Παράδειγμα: --save-basket outputs/ood_basket")
+    p.add_argument("--pt-model", type=str, default=None,
+                   dest="pt_model",
+                   help="PyTorch checkpoint για embedding extraction (--save-basket). "
+                        "Default: outputs/checkpoints/best_model.pt")
     return p.parse_args()
 
 
@@ -169,39 +188,127 @@ def load_patch(
 def detect_ood_hybrid(
     logits:        np.ndarray,   # (N, C) float32
     raw_intensity: np.ndarray,   # (N,)   float32
+    stats:         dict,          # normalizer_stats.json
     ood_cfg:       dict,
+) -> tuple:
+    """
+    Hybrid OOD detection — χρησιμοποιεί calibrated thresholds από ood_hybrid_results.json.
+
+    Αλγόριθμος (βαθμονομημένος στο val set):
+      1. z_intensity = (log1p(I) - mean_I) / std_I   [από normalizer_stats.json]
+      2. I_score = (intensity_hi - z_intensity) / (intensity_hi - intensity_lo)
+         → low intensity → high score (Water = specular reflection)
+      3. E_score = (z_energy - energy_lo) / (energy_hi - energy_lo)
+         → high energy → high score (Bridge = geometric novelty)
+      4. hybrid = weight_energy * E_score + weight_intensity * I_score
+      5. OOD if hybrid > best_threshold
+
+    Returns:
+      ood_mask   : (N,) bool   — True = OOD point
+      hybrid_scores : (N,) float32 — continuous OOD score
+    """
+    N = len(raw_intensity)
+
+    # ── Normalizer stats για intensity ────────────────────────────────────────
+    i_mean = stats.get("intensity", {}).get("mean", 6.5)
+    i_std  = stats.get("intensity", {}).get("std",  1.2)
+    z_intensity = (np.log1p(raw_intensity.astype(np.float32)) - i_mean) / i_std
+
+    # ── Energy score ──────────────────────────────────────────────────────────
+    max_logit = logits.max(axis=-1, keepdims=True)
+    energy    = -(max_logit[:, 0] + np.log(
+        np.exp(logits - max_logit).sum(axis=-1)
+    ))  # (N,) — numerically stable
+
+    # ── Normalization params από ood_hybrid_results.json ──────────────────────
+    norm       = ood_cfg.get("normalization", {})
+    energy_lo  = norm.get("energy_lo",    -6.18)
+    energy_hi  = norm.get("energy_hi",    -1.76)
+    intensity_lo = norm.get("intensity_lo", -3.05)
+    intensity_hi = norm.get("intensity_hi",  0.50)
+
+    # ── Scores (clipped σε [0, 1]) ────────────────────────────────────────────
+    i_range = intensity_hi - intensity_lo  # > 0
+    e_range = energy_hi - energy_lo        # > 0
+
+    # Intensity score: lower z → higher OOD score
+    i_score = np.clip((intensity_hi - z_intensity) / (i_range + 1e-8), 0.0, 1.0)
+
+    # Energy score: higher energy → higher OOD score
+    e_score = np.clip((energy - energy_lo) / (e_range + 1e-8), 0.0, 1.0)
+
+    # ── Hybrid ────────────────────────────────────────────────────────────────
+    w_e = float(ood_cfg.get("weight_energy",    0.0))
+    w_i = float(ood_cfg.get("weight_intensity", 1.0))
+    hybrid = w_e * e_score + w_i * i_score
+
+    # ── Threshold ─────────────────────────────────────────────────────────────
+    # best_threshold από ood_hybrid_results.json["val"]["best_threshold"]
+    threshold = ood_cfg.get("val", {}).get("best_threshold", 0.9967)
+
+    ood_mask = hybrid > threshold
+
+    return ood_mask.astype(bool), hybrid.astype(np.float32)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Embedding extraction via PyTorch (για --save-basket)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def load_pytorch_model(pt_path: Path):
+    """Φορτώνει το PyTorch μοντέλο για embedding extraction."""
+    try:
+        import torch
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "src"))
+        from models.pointnet2 import PointNet2Mini
+
+        ckpt = torch.load(str(pt_path), map_location="cpu", weights_only=False)
+        num_classes = ckpt.get("num_classes", 6)
+        model = PointNet2Mini(in_channels=7, num_classes=num_classes)
+        model.load_state_dict(ckpt["model_state"])
+        model.eval()
+        return model
+    except ImportError:
+        return None
+    except Exception as e:
+        print(f"[WARN] Failed to load PyTorch model: {e}", file=sys.stderr)
+        return None
+
+
+def extract_embeddings_pytorch(
+    X_batch: np.ndarray,    # (1, N, 7) float32
+    ood_mask: np.ndarray,   # (N,) bool
+    pt_model,               # PointNet2Mini instance
 ) -> np.ndarray:
     """
-    Hybrid OOD detection:
-    1. Energy score: E = -log(sum(exp(logits)))  — detects structural anomalies (Bridge)
-    2. Intensity threshold: log1p(I) < θ_i  — detects Water (specular reflection)
+    Εξάγει 32-dim embeddings για τα OOD points χρησιμοποιώντας PyTorch.
+    Χρησιμοποιείται για τη δημιουργία basket προτύπων.
 
-    Returns boolean mask (N,) — True = OOD point
+    Returns:
+        (M, 32) float32 — embeddings των OOD points
     """
-    # Energy score (higher = more OOD for geometric anomalies)
-    max_logit  = logits.max(axis=-1, keepdims=True)
-    energy     = -(max_logit[:, 0] + np.log(
-        np.exp(logits - max_logit).sum(axis=-1)
-    ))   # numerically stable logsumexp
+    import torch
+    X_t = torch.from_numpy(X_batch)       # (1, N, 7)
+    with torch.no_grad():
+        emb = pt_model.get_embeddings(X_t)  # (1, N, 32)
+    emb_np = emb[0].cpu().numpy()          # (N, 32)
+    return emb_np[ood_mask]                 # (M, 32)
 
-    # Get thresholds from val-calibrated config
-    # ood_cfg["val_stats"] has percentile-based thresholds
-    # Fallback: use conservative defaults if config missing keys
-    e_thr = ood_cfg.get("best_energy_threshold", -3.0)
-    i_thr = ood_cfg.get("best_intensity_threshold", None)
 
-    # Energy-based flag (Bridge, geometric anomalies)
-    energy_flag = energy > e_thr
-
-    # Intensity-based flag (Water: specular reflection → very low raw intensity)
-    # Threshold: if log1p(intensity) < log1p(1500) ≈ 7.3 → Water candidate
-    if i_thr is not None:
-        intensity_flag = np.log1p(raw_intensity) < i_thr
-    else:
-        # Fallback: percentile-based — bottom 5% of intensity
-        intensity_flag = raw_intensity < np.percentile(raw_intensity, 5)
-
-    return energy_flag | intensity_flag
+def save_basket_embeddings(
+    embeddings: np.ndarray,   # (M, 32)
+    basket_dir: Path,
+    patch_name: str,
+) -> Path:
+    """Αποθηκεύει OOD embeddings σε .npy αρχείο για το basket."""
+    import time as _time
+    basket_dir.mkdir(parents=True, exist_ok=True)
+    ts    = int(_time.time() * 1000) % 1_000_000   # ms timestamp (compact)
+    fname = f"ood_{patch_name}_{ts}.npy"
+    fpath = basket_dir / fname
+    np.save(str(fpath), embeddings.astype(np.float32))
+    return fpath
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -217,139 +324,9 @@ def main():
         print(json.dumps({"error": f"File not found: {patch_path}"}))
         sys.exit(1)
 
-    # ── Load configs ───────────────────────────────────────────────────────────
-    with open(args.stats) as f:
-        stats = json.load(f)
-
-    ood_cfg = {}
-    if not args.no_ood:
-        ood_cfg_path = Path(args.ood_cfg)
-        if ood_cfg_path.exists():
-            with open(ood_cfg_path) as f:
-                ood_cfg = json.load(f)
-        else:
-            if args.verbose:
-                print(f"[WARN] OOD config not found: {ood_cfg_path}, using defaults",
-                      file=sys.stderr)
-
-    # ── Load ONNX model ────────────────────────────────────────────────────────
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        print(json.dumps({"error": "onnxruntime not installed. Run: pip install onnxruntime"}))
-        sys.exit(1)
-
-    sess_opts = ort.SessionOptions()
-    sess_opts.intra_op_num_threads = 4       # Pi5: 4 ARM Cortex-A76 cores
-    sess_opts.inter_op_num_threads = 1
-    sess_opts.log_severity_level   = 3       # suppress warnings
-
-    model_path = Path(args.model)
-    if not model_path.exists():
-        print(json.dumps({"error": f"ONNX model not found: {model_path}. Run: python src/export_onnx.py"}))
-        sys.exit(1)
-
-    sess     = ort.InferenceSession(str(model_path), sess_opts,
-                                    providers=["CPUExecutionProvider"])
-    inp_name = sess.get_inputs()[0].name
-    out_name = sess.get_outputs()[0].name
-
-    # Class names from ONNX metadata (saved in model.json)
-    meta_path = model_path.with_suffix(".json")
-    class_names = [f"class_{i}" for i in range(6)]  # fallback
-    if meta_path.exists():
-        with open(meta_path) as f:
-            meta = json.load(f)
-        class_names = meta.get("active_classes", class_names)
-
-    # ── Load & preprocess patch ────────────────────────────────────────────────
-    is_fractal = (args.sensor == "fractal")
-    if args.verbose and not is_fractal:
-        print(f"[INFO] YellowScan mode: scan angle in degrees (no ×0.006 conversion)",
-              file=sys.stderr)
-        print(f"[WARN] Intensity stats from FRACTAL — Water OOD threshold may not transfer.",
-              file=sys.stderr)
-
-    t_prep = time.perf_counter()
-    try:
-        X_batch, raw_intensity, _, n_total = load_patch(
-            patch_path, args.num_points, stats, is_fractal=is_fractal
-        )
-    except Exception as e:
-        print(json.dumps({"error": f"Failed to load patch: {e}"}))
-        sys.exit(1)
-
-    # Propagate sensor type to result metadata
-    result_sensor = args.sensor
-    prep_ms = (time.perf_counter() - t_prep) * 1000
-
-    # ── Inference ─────────────────────────────────────────────────────────────
-    t_inf = time.perf_counter()
-    logits_batch = sess.run([out_name], {inp_name: X_batch})[0]  # (1, N, C)
-    inf_ms = (time.perf_counter() - t_inf) * 1000
-
-    logits = logits_batch[0]           # (N, C)
-    preds  = logits.argmax(axis=-1)    # (N,)
-
-    # ── Class counts ──────────────────────────────────────────────────────────
-    class_counts = {}
-    for c, name in enumerate(class_names):
-        cnt = int((preds == c).sum())
-        if cnt > 0:
-            class_counts[name] = cnt
-
-    # ── OOD Detection ─────────────────────────────────────────────────────────
-    ood_mask   = np.zeros(args.num_points, dtype=bool)
-    ood_method = "none"
-
-    if not args.no_ood:
-        ood_mask   = detect_ood_hybrid(logits, raw_intensity, ood_cfg)
-        ood_method = "hybrid (energy + intensity)"
-
-    n_ood   = int(ood_mask.sum())
-    ood_pct = n_ood / args.num_points * 100
-
-    total_ms = (time.perf_counter() - t_total) * 1000
-
-    # ── Output JSON ───────────────────────────────────────────────────────────
-    result = {
-        "patch":      patch_path.name,
-        "sensor":     args.sensor,
-        "n_points":   args.num_points,
-        "n_total":    n_total,
-        "classes":    class_counts,
-        "ood_points": n_ood,
-        "ood_pct":    round(ood_pct, 2),
-        "ood_method": ood_method,
-        "domain_shift_warning": None if is_fractal else
-            "YellowScan intensity stats differ from FRACTAL — Water OOD threshold unreliable",
-        "latency_ms": {
-            "preprocessing": round(prep_ms, 1),
-            "inference":     round(inf_ms, 1),
-            "total":         round(total_ms, 1),
-        },
-    }
-    print(json.dumps(result, indent=2))
-
-    # ── Verbose breakdown ──────────────────────────────────────────────────────
-    if args.verbose:
-        print("\n─── Classification breakdown ───", file=sys.stderr)
-        for name, cnt in sorted(class_counts.items(), key=lambda x: -x[1]):
-            pct = cnt / args.num_points * 100
-            bar = "█" * int(pct / 2)
-            print(f"  {name:<20} {cnt:>6,}  ({pct:5.1f}%)  {bar}",
-                  file=sys.stderr)
-        print(f"\n  OOD: {n_ood} points ({ood_pct:.1f}%)", file=sys.stderr)
-        print(f"\n─── Latency ───", file=sys.stderr)
-        print(f"  Preprocessing : {prep_ms:.1f} ms", file=sys.stderr)
-        print(f"  Inference     : {inf_ms:.1f} ms", file=sys.stderr)
-        print(f"  Total         : {total_ms:.1f} ms", file=sys.stderr)
-
-        # Pi5 estimate
-        est_pi5 = total_ms * 12   # conservative 12× slowdown
-        print(f"\n  Pi5 estimate  : ~{est_pi5:.0f} ms  ({est_pi5/1000:.1f}s)",
-              file=sys.stderr)
-
-
-if __name__ == "__main__":
-    main()
+    # ── --save-basket: φόρτωσε PyTorch μοντέλο νωρίς ────────────────────────────
+    pt_model = None
+    basket_dir = None
+    if args.save_basket:
+        basket_dir = Path(args.save_basket)
+        pt_path    = Path(ar

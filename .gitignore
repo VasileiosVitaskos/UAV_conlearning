@@ -8,32 +8,19 @@ venv/
 dist/
 build/
 
-# Data
+# Data — large files, not versioned
 data/
 *.laz
 *.las
 *.ply
 *.pcd
 
-# Outputs
-outputs/
+# Outputs — images, large CSVs
 *.png
 *.jpg
-*.json
+outputs/ood_energy_dist.csv
 
-# Notebooks
-notebooks/.ipynb_checkpoints/
-*.ipynb_checkpoints/
+# OOD basket — runtime-generated embeddings (not versioned)
+outputs/ood_basket/
 
-# Models
-*.pt
-*.pth
-*.onnx
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
+# Note

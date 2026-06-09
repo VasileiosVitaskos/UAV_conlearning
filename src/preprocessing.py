@@ -56,7 +56,10 @@ def normalize(
     out[:, 0] = (x_rel     - stats["x_rel"]["mean"])     / stats["x_rel"]["std"]
     out[:, 1] = (y_rel     - stats["y_rel"]["mean"])     / stats["y_rel"]["std"]
     out[:, 2] = (z_rel     - stats["z_rel"]["mean"])     / stats["z_rel"]["std"]
-    out[:, 3] = (intensity - stats["intensity"]["mean"]) / stats["intensity"]["std"]
+    # Run 6+: log1p transform before z-score (intensity is right-skewed, std/mean≈2).
+    # Amplifies the Water vs Ground gap from 0.12 → ~1.4 normalized units.
+    # Stats in normalizer_stats.json are pre-computed on log1p(raw_intensity).
+    out[:, 3] = (np.log1p(intensity) - stats["intensity"]["mean"]) / stats["intensity"]["std"]
 
     # Fixed range features
     out[:, 4] = return_num / 6.0
@@ -71,7 +74,7 @@ def normalize(
     return out
 
 
-def extract_features(las, is_fractal: bool = True, valid_classes: set = None) -> tuple:
+def extract_features(las, is_fractal: bool = True, valid_classes: set = None, stats: dict = None) -> tuple:
     """
     Φορτώνει ένα laspy object και επιστρέφει (X, y) normalized.
 
@@ -105,6 +108,7 @@ def extract_features(las, is_fractal: bool = True, valid_classes: set = None) ->
         n_returns  = np.array(las.number_of_returns)[mask].astype(np.float32),
         scan_angle = np.array(las.scan_angle if is_fractal else las.scan_angle_rank)[mask].astype(np.float32),
         is_fractal = is_fractal,
+        stats      = stats,    # None → φορτώνει αυτόματα από JSON
     )
 
     return X, labels[mask]

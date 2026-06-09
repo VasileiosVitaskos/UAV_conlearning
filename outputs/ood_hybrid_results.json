@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-06-08T01:30:47.506745",
+  "weight_energy": 0.0,
+  "weight_intensity": 1.0,
+  "normalization": {
+    "energy_lo": -6.177573204040527,
+    "energy_hi": -1.75678288936615,
+    "intensity_lo": -3.0490918159484863,
+    "intensity_hi": 0.49861496686935425
+  },
+  "val": {
+    "auroc_energy": 0.4943,
+    "auroc_intensity": 0.7843,
+    "auroc_hybrid": 0.7843,
+    "best_threshold": 0.9967,
+    "best_f1": 0.1958
+  },
+  "test": {
+    "auroc_energy": 0.4337,
+    "auroc_intensity": 0.8232,
+    "auroc_hybrid": 0.8231,
+    "aupr_hybrid": 0.228,
+    "f1": 0.2871,
+    "precision": 0.2802,
+    "recall": 0.2943,
+    "tp": 72777,
+    "fp": 186955,
+    "fn": 174537,
+    "tn": 3661731
+  },
+  "insight": "Energy detects geometric novelty (Bridge d'=1.66). Intensity detects spectral novelty (Water ALS specular reflection). Hybrid covers both. Knowledge Library should store detection feature fingerprint per terrain type alongside embedding prototype."
+}

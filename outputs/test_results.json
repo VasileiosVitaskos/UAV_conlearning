@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-06-07T19:42:58.735263",
+  "checkpoint": "C:\\Users\\user\\Drone_cont_Learing\\outputs\\checkpoints\\best_model.pt",
+  "checkpoint_epoch": 72,
+  "val_miou": 0.5923,
+  "num_classes": 8,
+  "active_names": [
+    "Ground",
+    "LowVegetation",
+    "MedVegetation",
+    "HighVegetation",
+    "Building",
+    "Water",
+    "Bridge",
+    "Noise"
+  ],
+  "test_miou": 0.6045,
+  "test_f1": 0.7042,
+  "test_oa": 0.908,
+  "test_loss": 0.1252,
+  "per_class_iou": {
+    "Ground": 0.8705,
+    "LowVegetation": 0.082,
+    "MedVegetation": 0.4703,
+    "HighVegetation": 0.9389,
+    "Building": 0.7574,
+    "Water": 0.9138,
+    "Bridge": 0.2839,
+    "Noise": 0.5195
+  }
+}

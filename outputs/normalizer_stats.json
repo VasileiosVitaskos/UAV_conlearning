@@ -1,0 +1,27 @@
+{
+  "x_rel": {
+    "mean": 2.3961830159169063e-12,
+    "std": 14.382038431024739
+  },
+  "y_rel": {
+    "mean": -1.323397805558987e-11,
+    "std": 14.370028014791668
+  },
+  "z_rel": {
+    "mean": -8.274488705344011e-16,
+    "std": 6.68144746703603
+  },
+  "intensity": {
+    "transform": "log1p",
+    "mean": 7.617000466200571,
+    "std": 1.4108495538374763,
+    "note": "z-score applied to log1p(raw_intensity). Run 6+."
+  },
+  "_meta": {
+    "n_points": 272369641,
+    "n_patches": 3000,
+    "method": "Welford online algorithm, train set only",
+    "intensity_transform": "log1p",
+    "version": "v2_log1p"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-06-08T23:46:57.573740",
+  "energy_score": {
+    "test_auroc": 0.4321,
+    "test_aupr": 0.1621,
+    "test_f1": 0.2951,
+    "water_d_prime": 0.05,
+    "bridge_d_prime": 1.66
+  },
+  "mahalanobis": {
+    "test_auroc": 0.3838,
+    "test_aupr": 0.0458,
+    "test_f1": 0.0283
+  },
+  "verdict": "WORSE  AUROC -0.0483 -- Water/Ground inseparable in 32-dim space"
+}

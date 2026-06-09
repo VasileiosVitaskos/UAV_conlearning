@@ -43,11 +43,18 @@ scp src/inference.py                 pi@<pi_ip>:~/Drone_cont_Learing/src/
 python3 -m venv ~/.venv_drone
 source ~/.venv_drone/bin/activate
 
-# Εγκατάσταση onnxruntime (ARM64 wheel, ~50MB — δεν χρειάζεσαι PyTorch!)
+# Βασικές εξαρτήσεις (fast ONNX inference + OOD detection)
 pip install onnxruntime laspy numpy
+
+# PyTorch — για Continual Learning (LwF) + --save-basket embedding extraction
+# ~200MB ARM64 wheel. Απαιτείται για: lwf_train.py, few_shot_add_class.py
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-> **Σημείωση:** Το `onnxruntime` για ARM64 είναι ~50MB (vs ~200MB για PyTorch). Ταχύτερη εγκατάσταση, μικρότερο footprint στη microSD.
+> **Σημείωση:**
+> - Για **ONNX inference μόνο**: αρκεί `onnxruntime laspy numpy` (~50MB)
+> - Για **CL pipeline** (LwF update + basket): χρειάζεσαι και `torch` (~200MB)
+> - Το Pi5 ARM64 **δεν** έχει GPU — το PyTorch τρέχει αποκλειστικά σε CPU (εντάξει για inference + μικρό CL update)
 
 ---
 
@@ -182,12 +189,4 @@ Drone_cont_Learing/
 
 ## Σημειώσεις για thesis presentation
 
-- Το μοντέλο έχει **30,368 παραμέτρους** (0.12MB) — ιδανικό για edge
-- Εκπαιδεύτηκε σε **FRACTAL dataset** (3000 train patches, 50×50m)
-- **Val mIoU = 0.6412** (Run 7, epoch 36)
-- **OOD AUROC = 0.8232** για Water + Bridge detection (hybrid method)
-- Latency Pi5: ~1.5-2 sec / patch (4096 points)
-
----
-
-*Για ερωτήσεις: Βασίλειος Βιτάσκος (ΑΕΜ 235)*
+- Το μοντέλο έχει **30,36

@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-06-08T00:38:04.857327",
+  "model": {
+    "checkpoint_epoch": 82,
+    "val_miou": 0.6557,
+    "num_classes": 6,
+    "active_names": [
+      "Ground",
+      "LowVegetation",
+      "MedVegetation",
+      "HighVegetation",
+      "Building",
+      "Noise"
+    ]
+  },
+  "ood_setup": {
+    "ood_class_ids": [
+      5,
+      6
+    ],
+    "ood_class_names": [
+      "Water",
+      "Bridge"
+    ],
+    "method": "Energy Score: E(x) = -logsumexp(f(x))",
+    "reference": "Liu et al., NeurIPS 2020"
+  },
+  "calibration_val": {
+    "threshold": -2.6879,
+    "auroc": 0.4943,
+    "aupr": 0.0251,
+    "precision": 0.0606,
+    "recall": 0.1526,
+    "f1": 0.0867,
+    "tp": 12014,
+    "fp": 186392,
+    "fn": 66716,
+    "tn": 3830878,
+    "n_ood": 78730,
+    "n_known": 4017270
+  },
+  "test_results": {
+    "threshold": -2.6879,
+    "auroc": 0.4321,
+    "aupr": 0.056,
+    "precision": 0.094,
+    "recall": 0.082,
+    "f1": 0.0876,
+    "tp": 20274,
+    "fp": 195471,
+    "fn": 227040,
+    "tn": 3653215,
+    "n_ood": 247314,
+    "n_known": 3848686
+  },
+  "energy_stats": {
+    "val_known_mean": -4.4648,
+    "val_known_p95": -2.7345,
+    "val_ood_mean": -4.3488,
+    "val_ood_p5": -5.2922,
+    "test_known_mean": -4.4448,
+    "test_ood_mean": -4.5687
+  }
+}
